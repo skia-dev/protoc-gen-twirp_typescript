@@ -66,12 +66,14 @@ export class Default{{.Name}} implements {{.Name}} {
     private hostname: string;
     private fetch: Fetch;
     private writeCamelCase: boolean;
-    private pathPrefix = "{{$twirpPrefix}}/{{.Package}}.{{.Name}}/";
+	private pathPrefix = "{{$twirpPrefix}}/{{.Package}}.{{.Name}}/";
+	private optionsOverride: object;
 
-    constructor(hostname: string, fetch: Fetch, writeCamelCase = false) {
+    constructor(hostname: string, fetch: Fetch, writeCamelCase = false, optionsOverride: any = {}) {
         this.hostname = hostname;
         this.fetch = fetch;
-        this.writeCamelCase = writeCamelCase;
+		this.writeCamelCase = writeCamelCase;
+		this.optionsOverride = optionsOverride;
     }
 
     {{- range .Methods}}
@@ -81,7 +83,7 @@ export class Default{{.Name}} implements {{.Name}} {
         if (!this.writeCamelCase) {
             body = {{.InputType}}ToJSON({{.InputArg}});
         }
-        return this.fetch(createTwirpRequest(url, body)).then((resp) => {
+        return this.fetch(createTwirpRequest(url, body, this.optionsOverride)).then((resp) => {
             if (!resp.ok) {
                 return throwTwirpError(resp);
             }
