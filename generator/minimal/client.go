@@ -369,7 +369,7 @@ func newField(f *descriptor.FieldDescriptorProto) ModelField {
 		JSONType: jsonType,
 	}
 
-	field.IsMessage = f.GetType() == descriptor.FieldDescriptorProto_TYPE_MESSAGE
+	field.IsMessage = f.GetType() == descriptor.FieldDescriptorProto_TYPE_MESSAGE && !(f.GetTypeName() == ".google.protobuf.Timestamp")
 	field.IsRepeated = isRepeated(f)
 
 	return field
@@ -404,7 +404,7 @@ func protoToTSType(f *descriptor.FieldDescriptorProto) (string, string) {
 		// JSON.stringify already handles serializing Date to its RFC 3339 format.
 		//
 		if name == ".google.protobuf.Timestamp" {
-			tsType = "Date"
+			tsType = "string"
 			jsonType = "string"
 		} else {
 			tsType = removePkg(name)
