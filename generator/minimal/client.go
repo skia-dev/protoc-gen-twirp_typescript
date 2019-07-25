@@ -19,35 +19,57 @@ import {createTwirpRequest, throwTwirpError, Fetch} from './twirp';
 {{range .Models}}
 {{- if not .Primitive}}
 export interface {{.Name}} {
+	{{if .IsMap}}
+	[key: string]: {{.MapValueType}};
+	{{else}}
     {{range .Fields -}}
     {{.Name}}?: {{.Type}};
+	{{end}}
     {{end}}
 }
 
 interface {{.Name}}JSON {
-    {{range .Fields -}}
-    {{.JSONName}}?: {{.JSONType}};
+	{{if .IsMap}}
+	[key: string]: {{.MapValueType}}JSON;
+	{{else}}
+	{{range .Fields -}}
+	{{.JSONName}}?: {{.JSONType}};
+	{{end}}
     {{end}}
 }
 
 {{if .CanMarshal}}
 const {{.Name}}ToJSON = (m: {{.Name}}): {{.Name}}JSON => {
+{{if .IsMap}}
+	return Object.keys(m).reduce((acc, key) => {
+		acc[key] = {{.MapValueType}}ToJSON(m[key]);
+		return acc;
+	}, {} as {{.Name}});
+{{else}}
     return {
         {{range .Fields -}}
         {{.JSONName}}: {{stringify .}},
         {{end}}
-    };
+	};
+{{end}}
 };
 {{end -}}
 
 {{if .CanUnmarshal}}
-const JSONTo{{.Name}} = (m: {{.Name}} | {{.Name}}JSON): {{.Name}} => {
-    {{$Model := .Name}}
+const JSONTo{{.Name}} = (m: {{.Name}}JSON): {{.Name}} => {
+	{{$Model := .Name}}
+	{{if .IsMap}}
+	return Object.keys(m).reduce((acc, key) => {
+		acc[key] = JSONTo{{.MapValueType}}(m[key]);
+		return acc;
+	  }, {});
+	{{else}}
     return {
         {{range .Fields -}}
         {{.Name}}: {{parse . $Model}},
         {{end}}
-    };
+	};
+	{{end}}
 };
 {{end -}}
 {{end -}}
@@ -62,7 +84,7 @@ export interface {{.Name}} {
     {{end}}
 }
 
-export class Default{{.Name}} implements {{.Name}} {
+export class {{.Name}}Client implements {{.Name}} {
     private hostname: string;
     private fetch: Fetch;
     private writeCamelCase: boolean;
@@ -102,6 +124,8 @@ type Model struct {
 	Fields       []ModelField
 	CanMarshal   bool
 	CanUnmarshal bool
+	IsMap        bool
+	MapValueType string
 }
 
 type ModelField struct {
@@ -111,6 +135,7 @@ type ModelField struct {
 	JSONType   string
 	IsMessage  bool
 	IsRepeated bool
+	IsMap      bool
 }
 
 type Service struct {
@@ -140,6 +165,7 @@ func NewAPIContext(twirpVersion string) APIContext {
 }
 
 type APIContext struct {
+	Package     string
 	Models      []*Model
 	Services    []*Service
 	TwirpPrefix string
@@ -171,7 +197,6 @@ func (ctx *APIContext) ApplyMarshalFlags() {
 			}
 
 			baseType := getBaseType(f)
-
 			if m.CanMarshal {
 				ctx.enableMarshal(ctx.modelLookup[baseType])
 			}
@@ -242,7 +267,7 @@ func (g *Generator) Generate(d *descriptor.FileDescriptorProto) ([]*plugin.CodeG
 	}
 
 	ctx := NewAPIContext(g.twirpVersion)
-	pkg := d.GetPackage()
+	ctx.Package = d.GetPackage()
 
 	// Parse all Messages for generating typescript interfaces
 	for _, m := range d.GetMessageType() {
@@ -250,8 +275,29 @@ func (g *Generator) Generate(d *descriptor.FileDescriptorProto) ([]*plugin.CodeG
 			Name: m.GetName(),
 		}
 
+		// TODO: refactor
+		for _, m2 := range m.GetNestedType() {
+			nestedModel := &Model{
+				Name: fmt.Sprintf("%s_%s", m.GetName(), m2.GetName()),
+			}
+
+			if m2.Options.GetMapEntry() {
+				nestedModel.IsMap = true
+			}
+
+			for _, f2 := range m2.GetField() {
+				mf := ctx.newField(f2)
+				nestedModel.Fields = append(nestedModel.Fields, mf)
+				if nestedModel.IsMap && mf.Name == "value" {
+					nestedModel.MapValueType = mf.Type
+				}
+			}
+
+			ctx.AddModel(nestedModel)
+		}
+
 		for _, f := range m.GetField() {
-			model.Fields = append(model.Fields, newField(f))
+			model.Fields = append(model.Fields, ctx.newField(f))
 		}
 
 		ctx.AddModel(model)
@@ -261,13 +307,13 @@ func (g *Generator) Generate(d *descriptor.FileDescriptorProto) ([]*plugin.CodeG
 	for _, s := range d.GetService() {
 		service := &Service{
 			Name:    s.GetName(),
-			Package: pkg,
+			Package: ctx.Package,
 		}
 
 		for _, m := range s.GetMethod() {
 			methodPath := m.GetName()
 			methodName := strings.ToLower(methodPath[0:1]) + methodPath[1:]
-			in := removePkg(m.GetInputType())
+			in := ctx.removePkg(m.GetInputType())
 			arg := strings.ToLower(in[0:1]) + in[1:]
 
 			method := ServiceMethod{
@@ -275,7 +321,7 @@ func (g *Generator) Generate(d *descriptor.FileDescriptorProto) ([]*plugin.CodeG
 				Path:       methodPath,
 				InputArg:   arg,
 				InputType:  in,
-				OutputType: removePkg(m.GetOutputType()),
+				OutputType: ctx.removePkg(m.GetOutputType()),
 			}
 
 			service.Methods = append(service.Methods, method)
@@ -357,18 +403,17 @@ func tsModuleFilename(f *descriptor.FileDescriptorProto) string {
 	return name
 }
 
-func newField(f *descriptor.FieldDescriptorProto) ModelField {
-	tsType, jsonType := protoToTSType(f)
-	jsonName := f.GetName()
-	name := camelCase(jsonName)
-
+func (c *APIContext) newField(f *descriptor.FieldDescriptorProto) ModelField {
 	field := ModelField{
-		Name:     name,
-		Type:     tsType,
-		JSONName: jsonName,
-		JSONType: jsonType,
+		Name: camelCase(f.GetName()),
 	}
 
+	if m, ok := c.modelLookup[c.removePkg(f.GetTypeName())]; ok {
+		field.IsMap = m.IsMap
+	}
+
+	field.Type, field.JSONType = c.protoToTSType(f, field)
+	field.JSONName = f.GetName()
 	field.IsMessage = f.GetType() == descriptor.FieldDescriptorProto_TYPE_MESSAGE && !(f.GetTypeName() == ".google.protobuf.Timestamp")
 	field.IsRepeated = isRepeated(f)
 
@@ -377,7 +422,7 @@ func newField(f *descriptor.FieldDescriptorProto) ModelField {
 
 // generates the (Type, JSONType) tuple for a ModelField so marshal/unmarshal functions
 // will work when converting between TS interfaces and protobuf JSON.
-func protoToTSType(f *descriptor.FieldDescriptorProto) (string, string) {
+func (c *APIContext) protoToTSType(f *descriptor.FieldDescriptorProto, mf ModelField) (string, string) {
 	tsType := "string"
 	jsonType := "string"
 
@@ -407,12 +452,12 @@ func protoToTSType(f *descriptor.FieldDescriptorProto) (string, string) {
 			tsType = "string"
 			jsonType = "string"
 		} else {
-			tsType = removePkg(name)
-			jsonType = removePkg(name) + "JSON"
+			tsType = c.removePkg(name)
+			jsonType = c.removePkg(name) + "JSON"
 		}
 	}
 
-	if isRepeated(f) {
+	if isRepeated(f) && !mf.IsMap {
 		tsType = tsType + "[]"
 		jsonType = jsonType + "[]"
 	}
@@ -424,9 +469,10 @@ func isRepeated(field *descriptor.FieldDescriptorProto) bool {
 	return field.Label != nil && *field.Label == descriptor.FieldDescriptorProto_LABEL_REPEATED
 }
 
-func removePkg(s string) string {
-	p := strings.Split(s, ".")
-	return p[len(p)-1]
+func (c *APIContext) removePkg(s string) string {
+	s2 := strings.ReplaceAll(s, c.Package, "")
+	s3 := strings.TrimLeft(s2, ".")
+	return strings.ReplaceAll(s3, ".", "_")
 }
 
 func camelCase(s string) string {
@@ -444,56 +490,50 @@ func camelCase(s string) string {
 }
 
 func stringify(f ModelField) string {
-	if f.IsRepeated {
+	if f.IsRepeated && !f.IsMap {
 		singularType := strings.Trim(f.Type, "[]") // strip array brackets from type
 
 		if f.Type == "Date" {
-			return fmt.Sprintf("m.%s.map((n) => n.toISOString())", f.Name)
+			return fmt.Sprintf("m.%s && m.%s.map((n) => n.toISOString())", f.Name, f.Name)
 		}
 
 		if f.IsMessage {
-			return fmt.Sprintf("m.%s.map(%sToJSON)", f.Name, singularType)
+			return fmt.Sprintf("m.%s && m.%s.map(%sToJSON)", f.Name, f.Name, singularType)
 		}
 	}
 
 	if f.Type == "Date" {
-		return fmt.Sprintf("m.%s.toISOString()", f.Name)
+		return fmt.Sprintf("m.%s && m.%s.toISOString()", f.Name, f.Name)
 	}
 
 	if f.IsMessage {
-		return fmt.Sprintf("%sToJSON(m.%s)", f.Type, f.Name)
+		return fmt.Sprintf("m.%s && %sToJSON(m.%s)", f.Name, f.Type, f.Name)
 	}
 
 	return "m." + f.Name
 }
 
 func parse(f ModelField, modelName string) string {
-	field := "(((m as " + modelName + ")." + f.Name + ") ? (m as " + modelName + ")." + f.Name + " : (m as " + modelName + "JSON)." + f.JSONName + ")"
-	if f.Name == f.JSONName {
-		field = "m." + f.Name
-	}
+	field := "m." + f.JSONName
 
-	if f.IsRepeated {
-		singularTSType := strings.Trim(f.Type, "[]")       // strip array brackets from type
-		singularJSONType := strings.Trim(f.JSONType, "[]") // strip array brackets from type
-
-		arrayField := fmt.Sprintf("(%s as (%s | %s)[])", field, singularTSType, singularJSONType)
+	if f.IsRepeated && !f.IsMap {
+		singularTSType := strings.Trim(f.Type, "[]") // strip array brackets from type
 
 		if f.Type == "Date[]" {
-			return fmt.Sprintf("%s.map((n) => new Date(n))", arrayField)
+			return fmt.Sprintf("%s && %s.map((n) => new Date(n))", field, field)
 		}
 
 		if f.IsMessage {
-			return fmt.Sprintf("%s.map(JSONTo%s)", arrayField, singularTSType)
+			return fmt.Sprintf("%s && %s.map(JSONTo%s)", field, field, singularTSType)
 		}
 	}
 
 	if f.Type == "Date" {
-		return fmt.Sprintf("new Date(%s)", field)
+		return fmt.Sprintf("%s && new Date(%s)", field, field)
 	}
 
 	if f.IsMessage {
-		return fmt.Sprintf("JSONTo%s(%s)", f.Type, field)
+		return fmt.Sprintf("%s && JSONTo%s(%s)", field, f.Type, field)
 	}
 
 	return field
