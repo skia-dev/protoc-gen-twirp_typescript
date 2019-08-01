@@ -30,7 +30,11 @@ export interface {{.Name}} {
 
 interface {{.Name}}JSON {
 	{{if .IsMap}}
+	{{if .MapValueTypePrimitive}}
+	[key: string]: {{.MapValueType}};
+	{{else}}
 	[key: string]: {{.MapValueType}}JSON;
+	{{end}}
 	{{else}}
 	{{range .Fields -}}
 	{{.JSONName}}?: {{.JSONType}};
@@ -38,6 +42,7 @@ interface {{.Name}}JSON {
     {{end}}
 }
 
+{{if not .MapValueTypePrimitive}}
 {{if .CanMarshal}}
 const {{.Name}}ToJSON = (m: {{.Name}}): {{.Name}}JSON => {
 {{if .IsMap}}
@@ -71,6 +76,7 @@ const JSONTo{{.Name}} = (m: {{.Name}}JSON): {{.Name}} => {
 	};
 	{{end}}
 };
+{{end -}}
 {{end -}}
 {{end -}}
 {{end}}
@@ -119,23 +125,25 @@ export class {{.Name}}Client implements {{.Name}} {
 `
 
 type Model struct {
-	Name         string
-	Primitive    bool
-	Fields       []ModelField
-	CanMarshal   bool
-	CanUnmarshal bool
-	IsMap        bool
-	MapValueType string
+	Name                  string
+	Primitive             bool
+	Fields                []ModelField
+	CanMarshal            bool
+	CanUnmarshal          bool
+	IsMap                 bool
+	MapValueType          string
+	MapValueTypePrimitive bool
 }
 
 type ModelField struct {
-	Name       string
-	Type       string
-	JSONName   string
-	JSONType   string
-	IsMessage  bool
-	IsRepeated bool
-	IsMap      bool
+	Name                  string
+	Type                  string
+	JSONName              string
+	JSONType              string
+	IsMessage             bool
+	IsRepeated            bool
+	IsMap                 bool
+	MapValueTypePrimitive bool
 }
 
 type Service struct {
@@ -287,17 +295,28 @@ func (g *Generator) Generate(d *descriptor.FileDescriptorProto) ([]*plugin.CodeG
 
 			for _, f2 := range m2.GetField() {
 				mf := ctx.newField(f2)
-				nestedModel.Fields = append(nestedModel.Fields, mf)
 				if nestedModel.IsMap && mf.Name == "value" {
 					nestedModel.MapValueType = mf.Type
+					if f2.GetType() != descriptor.FieldDescriptorProto_TYPE_MESSAGE {
+						nestedModel.MapValueTypePrimitive = true
+					}
 				}
+				nestedModel.Fields = append(nestedModel.Fields, mf)
+
 			}
 
 			ctx.AddModel(nestedModel)
 		}
 
 		for _, f := range m.GetField() {
-			model.Fields = append(model.Fields, ctx.newField(f))
+			f3 := ctx.newField(f)
+
+			ml, ok := ctx.modelLookup[ctx.removePkg(f.GetTypeName())]
+			if ok && ml.IsMap && ml.MapValueTypePrimitive {
+				f3.MapValueTypePrimitive = true
+			}
+
+			model.Fields = append(model.Fields, f3)
 		}
 
 		ctx.AddModel(model)
@@ -506,7 +525,7 @@ func stringify(f ModelField) string {
 		return fmt.Sprintf("m.%s && m.%s.toISOString()", f.Name, f.Name)
 	}
 
-	if f.IsMessage {
+	if f.IsMessage && !f.MapValueTypePrimitive {
 		return fmt.Sprintf("m.%s && %sToJSON(m.%s)", f.Name, f.Type, f.Name)
 	}
 
@@ -532,7 +551,7 @@ func parse(f ModelField, modelName string) string {
 		return fmt.Sprintf("%s && new Date(%s)", field, field)
 	}
 
-	if f.IsMessage {
+	if f.IsMessage && !f.MapValueTypePrimitive {
 		return fmt.Sprintf("%s && JSONTo%s(%s)", field, f.Type, field)
 	}
 
