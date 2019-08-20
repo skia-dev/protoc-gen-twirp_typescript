@@ -13,115 +13,128 @@ import (
 	plugin "github.com/golang/protobuf/protoc-gen-go/plugin"
 )
 
-const apiTemplate = `
-import {createTwirpRequest, throwTwirpError, Fetch} from './twirp';
+const apiTemplate = `import {createTwirpRequest, throwTwirpError, Fetch} from './twirp';
 
-{{range .Models}}
+{{- range .Enums}}
+
+export enum {{.Name}} {
+{{- range .Values}}
+  {{.}} = "{{.}}",
+{{- end}}
+}
+{{- end -}}
+
+{{- range .Models -}}
 {{- if not .Primitive}}
+
 export interface {{.Name}} {
-	{{if .IsMap}}
-	[key: string]: {{.MapValueType}};
-	{{else}}
-    {{range .Fields -}}
-    {{.Name}}?: {{.Type}};
-	{{end}}
-    {{end}}
+{{- if .IsMap}}
+  [key: string]: {{.MapValueType}};
+{{- else -}}
+{{- range .Fields}}
+  {{.Name}}?: {{.Type}};
+{{- end}}
+{{- end}}
 }
 
 interface {{.Name}}JSON {
-	{{if .IsMap}}
-	{{if .MapValueTypePrimitive}}
-	[key: string]: {{.MapValueType}};
-	{{else}}
-	[key: string]: {{.MapValueType}}JSON;
-	{{end}}
-	{{else}}
-	{{range .Fields -}}
-	{{.JSONName}}?: {{.JSONType}};
-	{{end}}
-    {{end}}
+{{- if .IsMap}}
+{{- if .MapValueTypePrimitive}}
+  [key: string]: {{.MapValueType}};
+{{- else}}
+  [key: string]: {{.MapValueType}}JSON;
+{{- end -}}
+{{- else -}}
+{{- range .Fields}}
+  {{.JSONName}}?: {{.JSONType}};
+{{- end}}
+{{- end}}
 }
 
-{{if not .MapValueTypePrimitive}}
-{{if .CanMarshal}}
-const {{.Name}}ToJSON = (m: {{.Name}}): {{.Name}}JSON => {
-{{if .IsMap}}
-	return Object.keys(m).reduce((acc, key) => {
-		acc[key] = {{.MapValueType}}ToJSON(m[key]);
-		return acc;
-	}, {} as {{.Name}});
-{{else}}
-    return {
-        {{range .Fields -}}
-        {{.JSONName}}: {{stringify .}},
-        {{end}}
-	};
-{{end}}
-};
-{{end -}}
+{{- if not .MapValueTypePrimitive}}
+{{- if .CanMarshal}}
 
-{{if .CanUnmarshal}}
-const JSONTo{{.Name}} = (m: {{.Name}}JSON): {{.Name}} => {
-	{{$Model := .Name}}
-	{{if .IsMap}}
-	return Object.keys(m).reduce((acc, key) => {
-		acc[key] = JSONTo{{.MapValueType}}(m[key]);
-		return acc;
-	  }, {} as {{.Name}});
-	{{else}}
-    return {
-        {{range .Fields -}}
-        {{.Name}}: {{parse . $Model}},
-        {{end}}
-	};
-	{{end}}
+const {{.Name}}ToJSON = (m: {{.Name}}): {{.Name}}JSON => {
+{{- if .IsMap}}
+  return Object.keys(m).reduce((acc, key) => {
+    acc[key] = {{.MapValueType}}ToJSON(m[key]);
+    return acc;
+  }, {} as {{.Name}});
+{{- else}}
+  return {
+    {{- range .Fields}}
+    {{.JSONName}}: {{stringify .}},
+    {{- end}}
+  };
+{{- end}}
 };
+{{- end -}}
+
+{{- if .CanUnmarshal}}
+
+const JSONTo{{.Name}} = (m: {{.Name}}JSON): {{.Name}} => {
+	{{- $Model := .Name -}}
+{{- if .IsMap}}
+  return Object.keys(m).reduce((acc, key) => {
+    acc[key] = JSONTo{{.MapValueType}}(m[key]);
+    return acc;
+  }, {} as {{.Name}});
+{{- else}}
+  return {
+    {{- range .Fields}}
+    {{.Name}}: {{parse . $Model}},
+    {{- end}}
+  };
+{{- end}}
+};
+{{- end -}}
 {{end -}}
 {{end -}}
 {{end -}}
-{{end}}
 
 {{- $twirpPrefix := .TwirpPrefix -}}
 
 {{range .Services}}
+
 export interface {{.Name}} {
-    {{- range .Methods}}
-    {{.Name}}: ({{.InputArg}}: {{.InputType}}) => Promise<{{.OutputType}}>;
-    {{end}}
+{{- range .Methods}}
+  {{.Name}}: ({{.InputArg}}: {{.InputType}}) => Promise<{{.OutputType}}>;
+{{- end}}
 }
 
 export class {{.Name}}Client implements {{.Name}} {
-    private hostname: string;
-    private fetch: Fetch;
-    private writeCamelCase: boolean;
-	private pathPrefix = "{{$twirpPrefix}}/{{.Package}}.{{.Name}}/";
-	private optionsOverride: object;
+  private hostname: string;
+  private fetch: Fetch;
+  private writeCamelCase: boolean;
+  private pathPrefix = "{{$twirpPrefix}}/{{.Package}}.{{.Name}}/";
+  private optionsOverride: object;
 
-    constructor(hostname: string, fetch: Fetch, writeCamelCase = false, optionsOverride: any = {}) {
-        this.hostname = hostname;
-        this.fetch = fetch;
-		this.writeCamelCase = writeCamelCase;
-		this.optionsOverride = optionsOverride;
+  constructor(hostname: string, fetch: Fetch, writeCamelCase = false, optionsOverride: any = {}) {
+    this.hostname = hostname;
+    this.fetch = fetch;
+    this.writeCamelCase = writeCamelCase;
+    this.optionsOverride = optionsOverride;
+  }
+
+{{- range .Methods}}
+
+  {{.Name}}({{.InputArg}}: {{.InputType}}): Promise<{{.OutputType}}> {
+    const url = this.hostname + this.pathPrefix + "{{.Path}}";
+    let body: {{.InputType}} | {{.InputType}}JSON = {{.InputArg}};
+    if (!this.writeCamelCase) {
+      body = {{.InputType}}ToJSON({{.InputArg}});
     }
+    return this.fetch(createTwirpRequest(url, body, this.optionsOverride)).then((resp) => {
+      if (!resp.ok) {
+        return throwTwirpError(resp);
+      }
 
-    {{- range .Methods}}
-    {{.Name}}({{.InputArg}}: {{.InputType}}): Promise<{{.OutputType}}> {
-        const url = this.hostname + this.pathPrefix + "{{.Path}}";
-        let body: {{.InputType}} | {{.InputType}}JSON = {{.InputArg}};
-        if (!this.writeCamelCase) {
-            body = {{.InputType}}ToJSON({{.InputArg}});
-        }
-        return this.fetch(createTwirpRequest(url, body, this.optionsOverride)).then((resp) => {
-            if (!resp.ok) {
-                return throwTwirpError(resp);
-            }
-
-            return resp.json().then(JSONTo{{.OutputType}});
-        });
-    }
-    {{end}}
+      return resp.json().then(JSONTo{{.OutputType}});
+    });
+  }
+{{- end}}
 }
-{{end}}
+{{- end}}
 `
 
 type Model struct {
@@ -143,6 +156,7 @@ type ModelField struct {
 	IsMessage             bool
 	IsRepeated            bool
 	IsMap                 bool
+	IsEnum                bool
 	MapValueTypePrimitive bool
 }
 
@@ -158,6 +172,11 @@ type ServiceMethod struct {
 	InputArg   string
 	InputType  string
 	OutputType string
+}
+
+type Enum struct {
+	Name   string
+	Values []string
 }
 
 func NewAPIContext(twirpVersion string) APIContext {
@@ -176,6 +195,7 @@ type APIContext struct {
 	Package     string
 	Models      []*Model
 	Services    []*Service
+	Enums       []*Enum
 	TwirpPrefix string
 	modelLookup map[string]*Model
 }
@@ -277,13 +297,41 @@ func (g *Generator) Generate(d *descriptor.FileDescriptorProto) ([]*plugin.CodeG
 	ctx := NewAPIContext(g.twirpVersion)
 	ctx.Package = d.GetPackage()
 
+	// TODO: This whole parsing code needs refactoring.
+	// It only supports one level of nesting which is done by duplicating
+	// code rather than using recursion
+
+	// Parse all enums for generating tpescript
+	for _, e := range d.GetEnumType() {
+		enum := &Enum{
+			Name: e.GetName(),
+		}
+		for _, ev := range e.GetValue() {
+			enum.Values = append(enum.Values, ev.GetName())
+		}
+
+		ctx.Enums = append(ctx.Enums, enum)
+	}
+
 	// Parse all Messages for generating typescript interfaces
 	for _, m := range d.GetMessageType() {
 		model := &Model{
 			Name: m.GetName(),
 		}
 
-		// TODO: refactor
+		// Parse all nested enums
+		for _, e := range m.GetEnumType() {
+			enum := &Enum{
+				Name: fmt.Sprintf("%s_%s", m.GetName(), e.GetName()),
+			}
+			for _, ev := range e.GetValue() {
+				enum.Values = append(enum.Values, ev.GetName())
+			}
+
+			ctx.Enums = append(ctx.Enums, enum)
+		}
+
+		// Parse all nested models
 		for _, m2 := range m.GetNestedType() {
 			nestedModel := &Model{
 				Name: fmt.Sprintf("%s_%s", m.GetName(), m2.GetName()),
@@ -435,6 +483,7 @@ func (c *APIContext) newField(f *descriptor.FieldDescriptorProto) ModelField {
 	field.JSONName = f.GetName()
 	field.IsMessage = f.GetType() == descriptor.FieldDescriptorProto_TYPE_MESSAGE && !(f.GetTypeName() == ".google.protobuf.Timestamp")
 	field.IsRepeated = isRepeated(f)
+	field.IsEnum = f.GetType() == descriptor.FieldDescriptorProto_TYPE_ENUM
 
 	return field
 }
@@ -474,6 +523,10 @@ func (c *APIContext) protoToTSType(f *descriptor.FieldDescriptorProto, mf ModelF
 			tsType = c.removePkg(name)
 			jsonType = c.removePkg(name) + "JSON"
 		}
+	case descriptor.FieldDescriptorProto_TYPE_ENUM:
+		name := f.GetTypeName()
+		tsType = c.removePkg(name)
+		jsonType = "string"
 	}
 
 	if isRepeated(f) && !mf.IsMap {
@@ -553,6 +606,10 @@ func parse(f ModelField, modelName string) string {
 
 	if f.IsMessage && !f.MapValueTypePrimitive {
 		return fmt.Sprintf("%s && JSONTo%s(%s)", field, f.Type, field)
+	}
+
+	if f.IsEnum {
+		return fmt.Sprintf("%s as %s", field, f.Type)
 	}
 
 	return field
