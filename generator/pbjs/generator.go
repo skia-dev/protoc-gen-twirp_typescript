@@ -136,6 +136,11 @@ func (g *Generator) Generate(d *descriptor.FileDescriptorProto) ([]*plugin.CodeG
 	return []*plugin.CodeGeneratorResponse_File{cf}, nil
 }
 
+func (g *Generator) RuntimeLibrary() (*plugin.CodeGeneratorResponse_File, error) {
+	// No runtime library needed for this generator
+	return nil, nil
+}
+
 func baseName(d *descriptor.FileDescriptorProto) string {
 	n := filepath.Base(d.GetName())
 	parts := strings.Split(n, ".")

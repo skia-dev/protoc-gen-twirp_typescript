@@ -43,7 +43,18 @@ func generate(in *plugin.CodeGeneratorRequest) *plugin.CodeGeneratorResponse {
 		return resp
 	}
 
+	// Convert FilesToGenerate to something actually useful
+	filesToGenerate := make(map[string]struct{})
+	for _, pf := range in.GetFileToGenerate() {
+		filesToGenerate[pf] = struct{}{}
+	}
+
 	for _, f := range in.GetProtoFile() {
+		if _, ok := filesToGenerate[f.GetName()]; !ok {
+			// Normally we'd want to have a peek at this file to handle imports
+			// but given that this generator doesn't really support imports... who cares!
+			continue
+		}
 		files, err := gen.Generate(f)
 		if err != nil {
 			resp.Error = proto.String(err.Error())
@@ -53,6 +64,15 @@ func generate(in *plugin.CodeGeneratorRequest) *plugin.CodeGeneratorResponse {
 		for _, cf := range files {
 			resp.File = append(resp.File, cf)
 		}
+	}
+
+	rl, err := gen.RuntimeLibrary()
+	if err != nil {
+		resp.Error = proto.String(err.Error())
+		return resp
+	}
+	if rl != nil {
+		resp.File = append(resp.File, rl)
 	}
 
 	return resp

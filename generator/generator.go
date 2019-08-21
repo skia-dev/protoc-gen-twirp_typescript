@@ -30,6 +30,7 @@ func GetParameters(in *plugin.CodeGeneratorRequest) map[string]string {
 
 type Generator interface {
 	Generate(d *descriptor.FileDescriptorProto) ([]*plugin.CodeGeneratorResponse_File, error)
+	RuntimeLibrary() (*plugin.CodeGeneratorResponse_File, error)
 }
 
 func NewGenerator(p map[string]string) (Generator, error) {

@@ -291,7 +291,7 @@ func (g *Generator) Generate(d *descriptor.FileDescriptorProto) ([]*plugin.CodeG
 	var files []*plugin.CodeGeneratorResponse_File
 
 	// skip WKT Timestamp, we don't do any special serialization for jsonpb.
-	if *d.Name == "google/protobuf/timestamp.proto" {
+	if d.GetName() == "google/protobuf/timestamp.proto" {
 		return files, nil
 	}
 
@@ -442,7 +442,6 @@ func (g *Generator) Generate(d *descriptor.FileDescriptorProto) ([]*plugin.CodeG
 	clientAPI.Content = proto.String(b.String())
 
 	files = append(files, clientAPI)
-	files = append(files, RuntimeLibrary())
 
 	if pkgName, ok := g.params["package_name"]; ok {
 		idx, err := CreatePackageIndex(files)
@@ -456,6 +455,10 @@ func (g *Generator) Generate(d *descriptor.FileDescriptorProto) ([]*plugin.CodeG
 	}
 
 	return files, nil
+}
+
+func (g *Generator) RuntimeLibrary() (*plugin.CodeGeneratorResponse_File, error) {
+	return RuntimeLibrary(), nil
 }
 
 func tsModuleFilename(f *descriptor.FileDescriptorProto) string {
