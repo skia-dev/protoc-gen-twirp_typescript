@@ -32,7 +32,7 @@ export interface {{.Name}} {
   [key: string]: {{.MapValueType}};
 {{- else -}}
 {{- range .Fields}}
-  {{.Name}}?: {{.Type}};
+  {{.Name}}{{if .IsOptional}}?{{end}}: {{.Type}};
 {{- end}}
 {{- end}}
 }
@@ -157,6 +157,7 @@ type ModelField struct {
 	IsRepeated            bool
 	IsMap                 bool
 	IsEnum                bool
+	IsOptional            bool
 	MapValueTypePrimitive bool
 }
 
@@ -479,7 +480,7 @@ func (c *APIContext) newField(f *descriptor.FieldDescriptorProto) ModelField {
 		field.IsMap = m.IsMap
 	}
 
-	field.Type, field.JSONType = c.protoToTSType(f, field)
+	field.Type, field.JSONType, field.IsOptional = c.protoToTSType(f, field)
 	field.JSONName = f.GetName()
 	field.IsMessage = f.GetType() == descriptor.FieldDescriptorProto_TYPE_MESSAGE && !(f.GetTypeName() == ".google.protobuf.Timestamp")
 	field.IsRepeated = isRepeated(f)
@@ -490,9 +491,10 @@ func (c *APIContext) newField(f *descriptor.FieldDescriptorProto) ModelField {
 
 // generates the (Type, JSONType) tuple for a ModelField so marshal/unmarshal functions
 // will work when converting between TS interfaces and protobuf JSON.
-func (c *APIContext) protoToTSType(f *descriptor.FieldDescriptorProto, mf ModelField) (string, string) {
+func (c *APIContext) protoToTSType(f *descriptor.FieldDescriptorProto, mf ModelField) (string, string, bool) {
 	tsType := "string"
 	jsonType := "string"
+	optional := false
 
 	switch f.GetType() {
 	case descriptor.FieldDescriptorProto_TYPE_DOUBLE,
@@ -519,10 +521,11 @@ func (c *APIContext) protoToTSType(f *descriptor.FieldDescriptorProto, mf ModelF
 		if name == ".google.protobuf.Timestamp" {
 			tsType = "string"
 			jsonType = "string"
-		} else {
-			tsType = c.removePkg(name)
-			jsonType = c.removePkg(name) + "JSON"
+			break
 		}
+		tsType = c.removePkg(name)
+		jsonType = c.removePkg(name) + "JSON"
+		optional = true
 	case descriptor.FieldDescriptorProto_TYPE_ENUM:
 		name := f.GetTypeName()
 		tsType = c.removePkg(name)
@@ -532,9 +535,10 @@ func (c *APIContext) protoToTSType(f *descriptor.FieldDescriptorProto, mf ModelF
 	if isRepeated(f) && !mf.IsMap {
 		tsType = tsType + "[]"
 		jsonType = jsonType + "[]"
+		optional = true
 	}
 
-	return tsType, jsonType
+	return tsType, jsonType, optional
 }
 
 func isRepeated(field *descriptor.FieldDescriptorProto) bool {
@@ -612,5 +616,15 @@ func parse(f ModelField, modelName string) string {
 		return fmt.Sprintf("%s as %s", field, f.Type)
 	}
 
-	return field
+	format := "%s"
+	switch f.Type {
+	case "string":
+		format = `%s || ""`
+	case "number":
+		format = `%s || 0`
+	case "boolean":
+		format = `%s || false`
+	}
+
+	return fmt.Sprintf(format, field)
 }
