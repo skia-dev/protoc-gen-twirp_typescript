@@ -476,28 +476,16 @@ func tsModuleFilename(f *descriptor.FileDescriptorProto) string {
 
 func (c *APIContext) newField(f *descriptor.FieldDescriptorProto) ModelField {
 	field := ModelField{
-		Name: camelCase(f.GetName()),
+		Name:       camelCase(f.GetName()),
+		JSONName:   f.GetName(),
+		Type:       "string",
+		JSONType:   "string",
+		IsRepeated: isRepeated(f),
 	}
 
 	if m, ok := c.modelLookup[c.removePkg(f.GetTypeName())]; ok {
 		field.IsMap = m.IsMap
 	}
-
-	field.Type, field.JSONType, field.IsOptional = c.protoToTSType(f, field)
-	field.JSONName = f.GetName()
-	field.IsMessage = f.GetType() == descriptor.FieldDescriptorProto_TYPE_MESSAGE && !(f.GetTypeName() == ".google.protobuf.Timestamp")
-	field.IsRepeated = isRepeated(f)
-	field.IsEnum = f.GetType() == descriptor.FieldDescriptorProto_TYPE_ENUM
-
-	return field
-}
-
-// generates the (Type, JSONType) tuple for a ModelField so marshal/unmarshal functions
-// will work when converting between TS interfaces and protobuf JSON.
-func (c *APIContext) protoToTSType(f *descriptor.FieldDescriptorProto, mf ModelField) (string, string, bool) {
-	tsType := "string"
-	jsonType := "string"
-	optional := false
 
 	switch f.GetType() {
 	case descriptor.FieldDescriptorProto_TYPE_DOUBLE,
@@ -505,43 +493,58 @@ func (c *APIContext) protoToTSType(f *descriptor.FieldDescriptorProto, mf ModelF
 		descriptor.FieldDescriptorProto_TYPE_FIXED64,
 		descriptor.FieldDescriptorProto_TYPE_INT32,
 		descriptor.FieldDescriptorProto_TYPE_INT64:
-		tsType = "number"
-		jsonType = "number"
+		field.Type = "number"
+		field.JSONType = "number"
 	case descriptor.FieldDescriptorProto_TYPE_STRING:
-		tsType = "string"
-		jsonType = "string"
+		field.Type = "string"
+		field.JSONType = "string"
 	case descriptor.FieldDescriptorProto_TYPE_BOOL:
-		tsType = "boolean"
-		jsonType = "boolean"
+		field.Type = "boolean"
+		field.JSONType = "boolean"
 	case descriptor.FieldDescriptorProto_TYPE_MESSAGE:
 		name := f.GetTypeName()
-
+		switch name {
 		// Google WKT Timestamp is a special case here:
 		//
 		// Currently the value will just be left as jsonpb RFC 3339 string.
 		// JSON.stringify already handles serializing Date to its RFC 3339 format.
 		//
-		if name == ".google.protobuf.Timestamp" {
-			tsType = "string"
-			jsonType = "string"
-			break
+		case ".google.protobuf.Timestamp":
+			field.Type = "string"
+			field.JSONType = "string"
+		case ".google.protobuf.DoubleValue", ".google.protobuf.FloatValue", ".google.protobuf.Int64Value",
+			".google.protobuf.UInt64Value", ".google.protobuf.Int32Value", ".google.protobuf.UInt32Value":
+			field.Type = "number"
+			field.JSONType = "number"
+			field.IsOptional = true
+		case ".google.protobuf.StringValue", ".google.protobuf.BytesValue":
+			field.Type = "string"
+			field.JSONType = "string"
+			field.IsOptional = true
+		case ".google.protobuf.BoolValue":
+			field.Type = "boolean"
+			field.JSONType = "boolean"
+			field.IsOptional = true
+		default:
+			field.Type = c.removePkg(name)
+			field.JSONType = c.removePkg(name) + "JSON"
+			field.IsOptional = true
+			field.IsMessage = true
 		}
-		tsType = c.removePkg(name)
-		jsonType = c.removePkg(name) + "JSON"
-		optional = true
 	case descriptor.FieldDescriptorProto_TYPE_ENUM:
 		name := f.GetTypeName()
-		tsType = c.removePkg(name)
-		jsonType = "string"
+		field.Type = c.removePkg(name)
+		field.JSONType = "string"
+		field.IsEnum = true
 	}
 
-	if isRepeated(f) && !mf.IsMap {
-		tsType = tsType + "[]"
-		jsonType = jsonType + "[]"
-		optional = true
+	if field.IsRepeated && !field.IsMap {
+		field.Type = field.Type + "[]"
+		field.JSONType = field.JSONType + "[]"
+		field.IsOptional = true
 	}
 
-	return tsType, jsonType, optional
+	return field
 }
 
 func isRepeated(field *descriptor.FieldDescriptorProto) bool {
@@ -620,13 +623,15 @@ func parse(f ModelField, modelName string) string {
 	}
 
 	format := "%s"
-	switch f.Type {
-	case "string":
-		format = `%s || ""`
-	case "number":
-		format = `%s || 0`
-	case "boolean":
-		format = `%s || false`
+	if !f.IsOptional {
+		switch f.Type {
+		case "string":
+			format = `%s || ""`
+		case "number":
+			format = `%s || 0`
+		case "boolean":
+			format = `%s || false`
+		}
 	}
 
 	return fmt.Sprintf(format, field)
