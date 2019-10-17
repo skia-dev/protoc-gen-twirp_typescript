@@ -512,6 +512,7 @@ func (c *APIContext) newField(f *descriptor.FieldDescriptorProto) ModelField {
 		case ".google.protobuf.Timestamp":
 			field.Type = "string"
 			field.JSONType = "string"
+			field.IsOptional = true
 		case ".google.protobuf.DoubleValue", ".google.protobuf.FloatValue", ".google.protobuf.Int64Value",
 			".google.protobuf.UInt64Value", ".google.protobuf.Int32Value", ".google.protobuf.UInt32Value":
 			field.Type = "number"
