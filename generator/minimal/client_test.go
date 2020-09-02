@@ -84,7 +84,7 @@ func Test_parse(t *testing.T) {
 				},
 				modelName: "GetClientsResponse",
 			},
-			want: "(m.dates as (Date | string)[]).map((n) => new Date(n))",
+			want: "m.dates && m.dates.map((n) => new Date(n))",
 		},
 		{
 			// Example proto:
@@ -103,7 +103,7 @@ func Test_parse(t *testing.T) {
 				},
 				modelName: "GetClientsResponse",
 			},
-			want: "((((m as GetClientsResponse).special_dates) ? (m as GetClientsResponse).special_dates : (m as GetClientsResponseJSON).specialDates) as (Date | string)[]).map((n) => new Date(n))",
+			want: "m.specialDates && m.specialDates.map((n) => new Date(n))",
 		},
 		{
 			// Example proto:
@@ -122,7 +122,7 @@ func Test_parse(t *testing.T) {
 				},
 				modelName: "GetClientsResponse",
 			},
-			want: "(m.clients as (Client | ClientJSON)[]).map(JSONToClient)",
+			want: "m.clients && m.clients.map(JSONToClient)",
 		},
 		{
 			// Example proto:
@@ -141,7 +141,7 @@ func Test_parse(t *testing.T) {
 				},
 				modelName: "GetClientsResponse",
 			},
-			want: "((((m as GetClientsResponse).special_clients) ? (m as GetClientsResponse).special_clients : (m as GetClientsResponseJSON).specialClients) as (Client | ClientJSON)[]).map(JSONToClient)",
+			want: "m.specialClients && m.specialClients.map(JSONToClient)",
 		},
 	}
 	for _, tt := range tests {

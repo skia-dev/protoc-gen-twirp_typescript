@@ -1,5 +1,7 @@
 module go.larrymyers.com/protoc-gen-twirp_typescript
 
+go 1.15
+
 require (
 	github.com/golang/protobuf v1.2.0
 	github.com/rs/cors v1.6.0
