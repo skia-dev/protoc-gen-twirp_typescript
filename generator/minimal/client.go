@@ -620,7 +620,7 @@ func parse(f ModelField, modelName string) string {
 	}
 
 	if f.IsEnum {
-		return fmt.Sprintf("%s as %s", field, f.Type)
+		return fmt.Sprintf("(%s || Object.keys(%s)[0]) as %s", field, f.Type, f.Type)
 	}
 
 	format := "%s"

@@ -143,6 +143,24 @@ func Test_parse(t *testing.T) {
 			},
 			want: "m.specialClients && m.specialClients.map(JSONToClient)",
 		},
+		{
+			// Example proto:
+			// message GetClientsResponse {
+			//   MyEnum enum_val = 1;
+			// }
+			name: "enum",
+			args: args{
+				f: ModelField{
+					Name:     "enum_val",
+					Type:     "MyEnum",
+					JSONName: "enumVal",
+					JSONType: "string",
+					IsEnum:   true,
+				},
+				modelName: "GetClientsResponse",
+			},
+			want: "(m.enumVal || Object.keys(MyEnum)[0]) as MyEnum",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
