@@ -161,6 +161,25 @@ func Test_parse(t *testing.T) {
 			},
 			want: "(m.enumVal || Object.keys(MyEnum)[0]) as MyEnum",
 		},
+		{
+			// Example proto:
+			// message GetClientsResponse {
+			//   repeated MyEnum enum_val = 1;
+			// }
+			name: "repeated enum",
+			args: args{
+				f: ModelField{
+					Name:       "enum_val",
+					Type:       "MyEnum[]",
+					JSONName:   "enumVal",
+					JSONType:   "string[]",
+					IsEnum:     true,
+					IsRepeated: true,
+				},
+				modelName: "GetClientsResponse",
+			},
+			want: "(m.enumVal || []) as MyEnum[]",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
